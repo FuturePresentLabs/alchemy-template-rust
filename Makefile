@@ -37,6 +37,7 @@ RUST_LIB     = $(RUST_LIB_DIR)/libpedal_dsp.a
 PK_SAMPLE_RATE  ?= 48000
 PK_OVERSAMPLING ?= 1
 PK_PEDAL        ?= pedals/demo.pedal
+PK_K_TABLES     ?= 0     # 1 = bake NR lookup tables (faster/smoother; bigger image)
 
 # ── App sources — yours to edit ─────────────────────────────────────────────
 CPP_SOURCES = \
@@ -78,7 +79,7 @@ LIBS   += -Wl,--start-group -lpedal_dsp -lc -lm -lnosys -Wl,--end-group
 # the resulting archive.
 .PHONY: rust-dsp
 rust-dsp:
-	cd $(RUST_DIR) && PK_SAMPLE_RATE=$(PK_SAMPLE_RATE) PK_OVERSAMPLING=$(PK_OVERSAMPLING) PK_PEDAL=$(PK_PEDAL) cargo build --release
+	cd $(RUST_DIR) && PK_SAMPLE_RATE=$(PK_SAMPLE_RATE) PK_OVERSAMPLING=$(PK_OVERSAMPLING) PK_PEDAL=$(PK_PEDAL) PK_K_TABLES=$(PK_K_TABLES) cargo build --release
 
 $(RUST_LIB): rust-dsp
 $(BUILD_DIR)/$(TARGET).elf: $(RUST_LIB)
