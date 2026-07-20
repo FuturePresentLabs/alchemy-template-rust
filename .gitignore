@@ -1,2 +1,5 @@
 build/
 .DS_Store
+
+# Rust DSP build artifacts
+dsp/target/

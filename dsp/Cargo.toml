@@ -1,0 +1,62 @@
+# =============================================================================
+# pedal-dsp — the Rust half of alchemy-template-rust.
+#
+# Cross-compiles pedalkernel's `no_std` WDF audio engine into a static library
+# (`libpedal_dsp.a`) with a small C ABI, which the C++ Alchemy SDK firmware
+# links and calls from its audio callback. See `src/lib.rs` for the bridge and
+# `build.rs` for the compile-a-.pedal-into-the-firmware step.
+#
+# Built by the top-level Makefile for `thumbv7em-none-eabihf`; `.cargo/config.toml`
+# pins that target and `target-cpu=cortex-m7` (matches the Daisy's FPU).
+# =============================================================================
+
+[package]
+name = "pedal-dsp"
+version = "0.1.0"
+edition = "2021"
+description = "Rust ⇆ C++ bridge running a pedalkernel CompiledPedal on the Daisy"
+license = "AGPL-3.0-or-later"        # inherited from pedalkernel; see LICENSE
+publish = false
+
+# Its own single-crate workspace — keeps cargo from trying to join the
+# pedalkernel workspace it path-depends into.
+[workspace]
+
+[lib]
+# A C-linkable static archive: `libpedal_dsp.a`, no Rust runtime.
+crate-type = ["staticlib"]
+
+[dependencies]
+# The no_std WDF runtime. `default-features = false` drops `std`; `serde`
+# lets us postcard-deserialize the CompiledPedal baked in by build.rs.
+pedalkernel-rt = { path = "../lib/pedalkernel/pedalkernel-rt", default-features = false, features = ["serde"] }
+
+# Deserialize the compiled pedal blob (no_std + alloc).
+postcard = { version = "1", default-features = false, features = ["alloc"] }
+
+# Global allocator for `alloc` on bare metal. The heap region is handed in at
+# runtime by the C++ side (pk_init) so we can point it at SDRAM.
+embedded-alloc = "0.5"
+
+# Provides the `critical-section` implementation embedded-alloc needs
+# (single-core: briefly disables interrupts around allocator ops).
+cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
+
+# `#[panic_handler]` for the bare-metal target — halts on panic.
+panic-halt = "0.2"
+
+[build-dependencies]
+# The std-only compiler: DSL parse → WDF → serialized CompiledPedal. Runs on
+# the host at build time only. default-features off to skip jack/tui/cli
+# (system libs we don't want in a build script); keep the BJT model + build-cache.
+pedalkernel = { path = "../lib/pedalkernel/pedalkernel", default-features = false, features = ["std", "build-cache", "gummel-poon"] }
+
+[profile.release]
+# The BOOT_SRAM app runs entirely from 480 KB of SRAM, and pedalkernel-rt's WDF
+# engine is large (every device model is reachable via deserialization, so the
+# linker can't garbage-collect the unused ones). "z" optimizes for size to fit;
+# switch to 3 for max speed if your image has room (e.g. a smaller circuit).
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"        # no unwinding on bare metal

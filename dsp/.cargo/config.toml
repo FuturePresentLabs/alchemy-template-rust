@@ -1,0 +1,11 @@
+# Cross-compile this crate for the Daisy's Cortex-M7 by default, so a bare
+# `cargo build --release` (as the Makefile invokes) produces the ARM staticlib.
+[build]
+target = "thumbv7em-none-eabihf"
+
+[target.thumbv7em-none-eabihf]
+# cortex-m7 codegen + fpv5-d16 hard-float, matching how libDaisy compiles the
+# C++ side (-mcpu=cortex-m7 -mfpu=fpv5-d16 -mfloat-abi=hard). The extern "C"
+# boundary only passes f32/pointers, so the ABI lines up regardless, but this
+# gets the best M7 codegen and a consistent FP model on both sides.
+rustflags = ["-C", "target-cpu=cortex-m7"]

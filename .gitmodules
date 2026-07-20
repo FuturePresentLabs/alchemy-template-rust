@@ -4,3 +4,6 @@
 [submodule "lib/libDaisy"]
 	path = lib/libDaisy
 	url = https://github.com/electro-smith/libDaisy.git
+[submodule "lib/pedalkernel"]
+	path = lib/pedalkernel
+	url = git@github.com:ajmwagar/pedalkernel.git
