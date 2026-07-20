@@ -156,15 +156,6 @@ You can also use the [Hermetic Modular Web Programmer](https://hermeticmodular.c
 4. **Stereo.** The demo runs one mono processor and mirrors it to both outputs.
    For true stereo, instantiate two processors on the Rust side (one per channel).
 
-### A note on pedalkernel's embedded (f32) build
-
-pedalkernel runs `f64` on desktop and `f32` on the Cortex-M7. The `f32` path is
-what this template compiles, and it needs the `f64 → crate::Wave` fixes in the
-nonlinear device models from [pedalkernel #219](https://github.com/ajmwagar/pedalkernel/pull/219)
-— which is exactly the commit `lib/pedalkernel` is pinned to. If you bump the
-submodule to a pedalkernel that predates that fix, the `dsp/` build fails with
-`f32`/`f64` type errors; pin a commit that includes it.
-
 ### Updating the vendored libraries
 
 ```sh
@@ -177,7 +168,28 @@ against; if you bump one, consider bumping the other to match.
 
 ## Licensing
 
-The template scaffolding is MIT (see `LICENSE`), **but pedalkernel is
-AGPL-3.0-or-later**. Linking `libpedal_dsp.a` into the firmware makes the
-resulting binary a derivative work of pedalkernel — so a distributed build is
-subject to the AGPL. Keep that in mind before shipping.
+The template scaffolding in this repo is MIT (see `LICENSE`).
+
+The DSP it links — **pedalkernel — is AGPLv3** (`AGPL-3.0-or-later`). Linking
+`libpedal_dsp.a` into the firmware makes the resulting binary a combined work
+governed by the AGPL: if you distribute the firmware (or a device running it),
+you must make the complete corresponding source available to recipients under
+the AGPL, including your `.pedal` circuits and any modifications.
+
+Two things matter before you ship a product:
+
+- **Hardware incorporation needs a commercial license.** pedalkernel's LICENSE
+  adds a Section 7 condition — incorporating the kernel/runtime into a
+  *qualifying hardware product* requires a separate commercial license from
+  **Future Present Labs LLC**, on top of (or instead of) the AGPL. Selling an
+  Alchemy Lab loaded with this firmware is exactly that case.
+- **A commercial license is available.** pedalkernel is dual-licensed. A
+  closed-source commercial license — kernel + runtime, hardware product rights,
+  prebuilt host bindings, and support — is offered through **Puget Audio**;
+  contact **info@puget.audio** for terms and pricing. It lifts the AGPL's
+  copyleft and source-disclosure obligations for your product.
+
+The authoritative terms are pedalkernel's
+[LICENSE](https://github.com/ajmwagar/pedalkernel/blob/main/LICENSE) and its
+[commercial licensing](https://github.com/ajmwagar/pedalkernel#commercial-licenses-and-bindings)
+section — this summary is just a pointer.
