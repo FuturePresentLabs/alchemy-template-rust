@@ -2,20 +2,19 @@
  * pedal.cpp — Alchemy Lab firmware that runs a pedalkernel WDF circuit.
  *
  * The whole Alchemy SDK surface is here (a control page, pot-catch, param-lock
- * automation, per-knob CV, presets, settings, LED rings) — exactly as in the
- * C++ template. The difference is the DSP: instead of a hand-written biquad,
- * the audio callback calls into the Rust `pedal-dsp` static library, which runs
- * a pedalkernel `CompiledPedal` compiled from `dsp/pedals/demo.pedal`
- * (the ProCo RAT, by default) at build time.
+ * automation, per-knob CV, presets, settings, LED rings). The DSP is the Rust
+ * `pedal-dsp` static library, which runs a pedalkernel `CompiledPedal` compiled
+ * from `dsp/pedals/demo.pedal` (the ProCo RAT, by default) at build time.
+ *
+ * The control wiring is DYNAMIC: at boot we ask the Rust side how many controls
+ * the loaded pedal exposes (pk_num_controls), read their labels
+ * (pk_control_label), and bind one physical pot per control, in order. Swap the
+ * `.pedal` and the knobs follow — no edits here (up to kNumPots controls).
  *
  * Control flow:
- *   - main()            wires hardware + SDK surfaces, hands Rust its heap.
+ *   - main()            wires hardware, hands Rust its heap, self-wires knobs.
  *   - AudioCallback()   audio IRQ → pk_process_block() (mono, mirrored to L/R).
- *   - UpdateControls()  control loop → pk_set_control() per knob, by label.
- *
- * The three knobs map to the .pedal's `controls { }` labels: Distortion,
- * Filter, Volume. Swap the pedal (edit dsp/pedals/demo.pedal or set PK_PEDAL)
- * and update the knob names/labels below to match its controls.
+ *   - UpdateControls()  control loop → pk_set_control_by_index() per knob.
  */
 
 #include "daisy_seed.h"
@@ -37,46 +36,30 @@ using namespace alchemy;
 /* ── Rust heap ───────────────────────────────────────────────────────────────
  * pedalkernel is `no_std + alloc`; it needs an allocator. We hand it a slab of
  * SDRAM (64 MB on the Daisy) at pk_init(). `.sdram_bss` is uninitialized, so
- * this costs nothing in the flashed image. 4 MB is ample for one pedal; a demo
- * blob deserializes into a few KB. Bump it if you bake in K-tables or big
- * circuits. */
+ * this costs nothing in the flashed image. 4 MB is ample for one pedal. */
 static constexpr size_t kPkHeapBytes = 4 * 1024 * 1024;
 static uint8_t DSY_SDRAM_BSS pk_heap[kPkHeapBytes];
 
-/* ── Controls ────────────────────────────────────────────────────────────────
- * Normalized 0..1 knobs; the Rust side maps position → circuit values per the
- * .pedal's `controls { }` ranges. Names here are just for the display/CV; the
- * *labels* passed to pk::SetControl() must match the .pedal exactly. */
-static VirtualKnob k_distortion = VirtualKnob(0, "Distortion")
-    .Linear(0.f, 1.f)
-    .Ring(Level(kPalette.distortion, FillAnim::Pulse));
+/* ── Controls (populated at boot from the loaded pedal) ──────────────────────
+ * One physical pot per pedal control, in declared order, up to kNumPots. */
+static VirtualKnob knobs[kNumPots];
+static char        knob_names[kNumPots][24]; // persistent label storage for name_
+static uint8_t     g_num_controls = 0;
 
-static VirtualKnob k_filter = VirtualKnob(1, "Filter")
-    .Linear(0.f, 1.f)
-    .Ring(Level(kPalette.filter, FillAnim::Ripple));
+static Page            main_page(0);
+static AlchemyLab      hw;
+static ControlLoop     loop(hw);
+static Pager           pager(hw.buttons[0], 1, kNumPots);
+static ParamLock<kNumPots> locks(hw.buttons[0], pager);
+static Presets         presets(hw.seed.qspi);
+static Settings        settings(hw, &pager);
+static CvMatrix        cv_matrix(kNumCvInputs);
 
-static VirtualKnob k_volume = VirtualKnob(2, "Volume")
-    .Linear(0.f, 1.f)
-    .Ring(Level(kPalette.volume, FillAnim::Pulse));
-
-static Page main_page = Page(0).Knobs(k_distortion, k_filter, k_volume);
-
-/* ── SDK surfaces ─────────────────────────────────────────────────────────── */
-static AlchemyLab              hw;
-static ControlLoop             loop(hw);
-static Pager                   pager(hw.buttons[0], 1, kNumPots);
-static ParamLock<kNumPots>     locks(hw.buttons[0], pager);
-static Presets                 presets(hw.seed.qspi);
-static Settings                settings(hw, &pager);
-static CvMatrix                cv_matrix(kNumCvInputs);
-
-/* Push the summed CV+knob values into the Rust pedal each control frame.
- * The label strings must match the .pedal's `controls { }` declarations. */
+/* Push the summed CV+knob values into the pedal each control frame, by index. */
 static void UpdateControls()
 {
-    pk::SetControl("Distortion", k_distortion.Value());
-    pk::SetControl("Filter",     k_filter.Value());
-    pk::SetControl("Volume",     k_volume.Value());
+    for (uint8_t i = 0; i < g_num_controls; ++i)
+        pk_set_control_by_index(i, knobs[i].Value());
 }
 
 /* Mono guitar pedal: run the left input through pedalkernel, mirror to both
@@ -99,10 +82,22 @@ int main()
     if (pk_init(hw.SampleRate(), pk_heap, sizeof(pk_heap)) != 0)
         for (;;) {}
 
-    /* CV routing — one jack per control, static layout. */
-    cv_matrix.Jack(0).To(k_distortion);
-    cv_matrix.Jack(1).To(k_filter);
-    cv_matrix.Jack(2).To(k_volume);
+    /* Discover the pedal's controls and bind one pot per control, in order.
+     * A pedal with more than kNumPots controls gets its first kNumPots on
+     * knobs; the rest keep their compiled defaults. */
+    g_num_controls = static_cast<uint8_t>(pk_num_controls());
+    if (g_num_controls > kNumPots)
+        g_num_controls = kNumPots;
+
+    for (uint8_t i = 0; i < g_num_controls; ++i)
+    {
+        pk::ControlLabel(i, knob_names[i], sizeof(knob_names[i]));
+        knobs[i] = VirtualKnob(i, knob_names[i])
+                       .Linear(0.f, 1.f)
+                       .Ring(Level(kRingPalette[i % kRingPaletteLen], FillAnim::Pulse));
+        main_page.Add(knobs[i]);
+        cv_matrix.Jack(i).To(knobs[i]);
+    }
 
     /* Opt into default settings gestures and preset management. */
     settings.UseBrightness();

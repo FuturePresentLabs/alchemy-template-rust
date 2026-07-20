@@ -120,3 +120,45 @@ pub unsafe extern "C" fn pk_set_control(label: *const u8, label_len: usize, valu
         proc.set_control_immediate(name, value);
     }
 }
+
+// ── Control introspection ────────────────────────────────────────────────────
+// The C++ side uses these to discover the loaded pedal's controls at boot and
+// wire knobs to them by index — so swapping `.pedal` needs no firmware edits.
+
+/// Number of controls the loaded pedal exposes (the `.pedal`'s `controls { }`
+/// block), in a stable order. 0 before [`pk_init`].
+#[no_mangle]
+pub extern "C" fn pk_num_controls() -> usize {
+    proc_mut().map_or(0, |p| p.controls.len())
+}
+
+/// Copy control `idx`'s label into `buf` (up to `buf_len` bytes; **not**
+/// NUL-terminated — the caller adds the terminator). Returns the label's full
+/// byte length regardless of truncation (like `snprintf`); 0 if `idx` is out of
+/// range or before [`pk_init`].
+///
+/// # Safety
+/// `buf` must point to `buf_len` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn pk_control_label(idx: usize, buf: *mut u8, buf_len: usize) -> usize {
+    let Some(proc) = proc_mut() else { return 0 };
+    let Some(ctl) = proc.controls.get(idx) else { return 0 };
+    let bytes = ctl.label.as_bytes();
+    let n = bytes.len().min(buf_len);
+    if !buf.is_null() && n > 0 {
+        // SAFETY: `buf` has `buf_len >= n` writable bytes; source is disjoint.
+        unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), buf, n) };
+    }
+    bytes.len()
+}
+
+/// Set control `idx` (as ordered by [`pk_num_controls`]) to a normalized
+/// `0.0..=1.0` value. Cheaper than the label form (no string match) and
+/// smoothed by the processor. Called from the main control loop; no-op for an
+/// out-of-range index or before [`pk_init`].
+#[no_mangle]
+pub extern "C" fn pk_set_control_by_index(idx: usize, value: f32) {
+    if let Some(proc) = proc_mut() {
+        proc.set_control_indexed(idx, value);
+    }
+}

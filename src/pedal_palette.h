@@ -1,22 +1,21 @@
 /**
- * pedal_palette.h — LED ring colors for the three demo controls.
+ * pedal_palette.h — LED ring colors, one per knob slot.
  *
- * Purely cosmetic and optional — it just keeps the colors out of the main
- * flow of pedal.cpp. One `Rgb` per knob.
+ * Purely cosmetic. Since the knobs are wired to whatever controls the loaded
+ * `.pedal` exposes (in order), colors are indexed by slot rather than named.
  */
 
 #pragma once
 
 #include "alchemy/led/panel.h"
 
-struct PedalPalette
-{
-    alchemy::LedPanel::Rgb distortion, filter, volume;
+// One color per physical pot (up to kNumPots). Cycled by control index.
+constexpr alchemy::LedPanel::Rgb kRingPalette[] = {
+    {0xFF, 0x30, 0x00}, // hot red/orange
+    {0x00, 0xC0, 0xFF}, // cyan
+    {0xFF, 0xB0, 0x20}, // amber
+    {0x40, 0xFF, 0x60}, // green
+    {0xC0, 0x40, 0xFF}, // violet
+    {0xFF, 0x40, 0x90}, // pink
 };
-
-// RAT-ish: hot distortion, cool filter sweep, warm output level.
-constexpr PedalPalette kPalette = {
-    {0xFF, 0x30, 0x00}, // Distortion — hot red/orange
-    {0x00, 0xC0, 0xFF}, // Filter     — cyan
-    {0xFF, 0xB0, 0x20}, // Volume     — amber
-};
+constexpr size_t kRingPaletteLen = sizeof(kRingPalette) / sizeof(kRingPalette[0]);

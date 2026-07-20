@@ -84,7 +84,7 @@ rustup target add thumbv7em-none-eabihf
 ## Getting started
 
 ```sh
-git clone --recurse-submodules https://github.com/ajmwagar/alchemy-template-rust.git my-pedal
+git clone --recurse-submodules git@github.com:FuturePresentLabs/alchemy-template-rust.git my-pedal
 cd my-pedal
 
 make libdaisy    # build libDaisy once after cloning
@@ -111,9 +111,12 @@ You can also use the [Hermetic Modular Web Programmer](https://hermeticmodular.c
 ## Make it yours
 
 1. **Swap the pedal.** Replace `dsp/pedals/demo.pedal` with your circuit (or
-   point `PK_PEDAL` at another file). Then update the three knobs in
-   [`src/pedal.cpp`](src/pedal.cpp) — the label strings passed to
-   `pk::SetControl("…")` **must match** your `.pedal`'s `controls { }` block.
+   point `PK_PEDAL` at another file), rebuild, and flash. **No firmware edits
+   needed** — the control wiring is dynamic: at boot the firmware queries
+   `pk_num_controls()` and binds one pot per control, in declared order, naming
+   each knob from `pk_control_label()` and driving it with
+   `pk_set_control_by_index()`. (A pedal with more than the six physical pots
+   gets its first six on knobs; the rest keep their compiled defaults.)
 
 2. **Tune quality vs. CPU.** The demo builds at 1× oversampling with runtime
    Newton-Raphson (small image, mono-friendly). Trade image size / CPU for
@@ -128,11 +131,21 @@ You can also use the [Hermetic Modular Web Programmer](https://hermeticmodular.c
    Real-time headroom on the M7 depends on the circuit (nonlinear roots are the
    cost). If audio glitches, drop oversampling or simplify the pedal.
 
+   The Rust lib is built `opt-level = "z"` (size). The BOOT_SRAM app runs
+   entirely from 480 KB of SRAM and pedalkernel-rt's WDF engine is large — every
+   device model is reachable via deserialization, so the linker can't drop the
+   unused ones. The RAT demo lands at ~409 KB (SRAM 83%). Switching the Rust
+   profile to `opt-level = 3` is faster but overflowed SRAM here; do it only with
+   a smaller circuit, and watch the `--print-memory-usage` output at link time.
+
 3. **The bridge.** Three C functions ([`src/pedalkernel_bridge.h`](src/pedalkernel_bridge.h)):
 
    ```c
    int32_t pk_init(float sample_rate, uint8_t* heap, size_t heap_len);
    void    pk_process_block(const float* in, float* out, size_t n);
+   size_t  pk_num_controls(void);
+   size_t  pk_control_label(size_t idx, uint8_t* buf, size_t buf_len);
+   void    pk_set_control_by_index(size_t idx, float value);
    void    pk_set_control(const uint8_t* label, size_t label_len, float value);
    ```
 
@@ -146,10 +159,11 @@ You can also use the [Hermetic Modular Web Programmer](https://hermeticmodular.c
 ### A note on pedalkernel's embedded (f32) build
 
 pedalkernel runs `f64` on desktop and `f32` on the Cortex-M7. The `f32` path is
-what this template compiles; it needs the small set of `f64 → crate::Wave`
-fixes in the nonlinear device models that ship on pedalkernel `main`. If you
-pin an older pedalkernel commit and the `dsp/` build fails with `f32`/`f64`
-type errors, bump the submodule.
+what this template compiles, and it needs the `f64 → crate::Wave` fixes in the
+nonlinear device models from [pedalkernel #219](https://github.com/ajmwagar/pedalkernel/pull/219)
+— which is exactly the commit `lib/pedalkernel` is pinned to. If you bump the
+submodule to a pedalkernel that predates that fix, the `dsp/` build fails with
+`f32`/`f64` type errors; pin a commit that includes it.
 
 ### Updating the vendored libraries
 
