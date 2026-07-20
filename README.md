@@ -186,9 +186,8 @@ covered by it.
 
 For that case, pedalkernel is dual-licensed — a closed-source commercial
 license (kernel + runtime, hardware rights, prebuilt host bindings, and support)
-is available through **Puget Audio**; contact **info@puget.audio**.
+is available from **Future Present Labs**; contact **info@fpl.dev**.
 
 The authoritative terms are pedalkernel's
-[LICENSE](https://github.com/ajmwagar/pedalkernel/blob/main/LICENSE) and its
-[commercial licensing](https://github.com/ajmwagar/pedalkernel#commercial-licenses-and-bindings)
-section — this summary is just a pointer.
+[LICENSE](https://github.com/ajmwagar/pedalkernel/blob/main/LICENSE) — this
+summary is just a pointer.
