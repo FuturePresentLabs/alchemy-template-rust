@@ -178,11 +178,14 @@ the AGPL, including your `.pedal` circuits and any modifications.
 
 Two things matter before you ship a product:
 
-- **Hardware incorporation needs a commercial license.** pedalkernel's LICENSE
-  adds a Section 7 condition — incorporating the kernel/runtime into a
-  *qualifying hardware product* requires a separate commercial license from
-  **Future Present Labs LLC**, on top of (or instead of) the AGPL. Selling an
-  Alchemy Lab loaded with this firmware is exactly that case.
+- **Hardware incorporation above $1M revenue needs a commercial license.**
+  pedalkernel's LICENSE adds a Section 7 condition: incorporating the
+  kernel/runtime into hardware products *by any entity with annual revenue
+  exceeding $1M USD* (or majority-owned by such an entity) requires a separate
+  commercial license from **Future Present Labs LLC**, independent of AGPL
+  compliance. Below that threshold the AGPL alone governs (its copyleft still
+  applies on distribution); at or above it — a larger company shipping an
+  Alchemy Lab loaded with this firmware — the commercial license is required.
 - **A commercial license is available.** pedalkernel is dual-licensed. A
   closed-source commercial license — kernel + runtime, hardware product rights,
   prebuilt host bindings, and support — is offered through **Puget Audio**;
