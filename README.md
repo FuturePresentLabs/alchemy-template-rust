@@ -40,6 +40,12 @@ The heavy compiler (DSL parse → WDF → serialized processor) runs **once at
 build time on your machine**. The device only ever *deserializes* the result
 and runs it per sample.
 
+`build.rs` builds the compiler with pedalkernel's **`wave-f32`** feature so the
+blob's scalars are serialized as `f32` — matching the device's `Wave`. postcard
+isn't self-describing, so without this the f64 host blob would fail to
+deserialize on the M7 (and the firmware would never start). Needs a pedalkernel
+that has `wave-f32` ([ajmwagar/pedalkernel#221](https://github.com/ajmwagar/pedalkernel/pull/221)).
+
 ## What's inside
 
 ```
