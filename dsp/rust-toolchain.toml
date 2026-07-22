@@ -1,0 +1,5 @@
+# Pin the ARM bare-metal target so `cargo build` "just works" after a fresh
+# `rustup` install. Uses whatever stable you have (pedalkernel needs >= 1.80).
+[toolchain]
+channel = "stable"
+targets = ["thumbv7em-none-eabihf"]

@@ -1,102 +1,193 @@
-# alchemy-template
+# alchemy-template-rust
 
-The recommended starting point for your own [Hermetic Modular Alchemy
-Lab](https://hermeticmodular.com/modules/alchemy-lab) module firmware.
+A [Hermetic Modular Alchemy Lab](https://hermeticmodular.com/modules/alchemy-lab)
+firmware template whose **DSP is a [pedalkernel](https://github.com/ajmwagar/pedalkernel)
+WDF circuit written in Rust**, running on top of the full C++
+[Alchemy SDK](https://github.com/hermetic-modular/alchemy-sdk).
 
-This is the [Alchemy SDK](https://github.com/hermetic-modular/alchemy-sdk)'s
-`stereo_eq` example — a dual mono three-band EQ that opts into the full
-framework stack (pagination, pot catch, param lock, CV routing, presets,
-settings, LED animations) — packaged as a standalone project that vendors
-the Alchemy SDK and libDaisy as git submodules and builds with the standard
-Daisy `make` workflow.  Clone it, build it, flash it, then gut `src/` and
-make it yours.
+It's the [`alchemy-template`](https://github.com/hermetic-modular/alchemy-template)
+fork for people who want to author effects as `.pedal` netlists (op-amps,
+diodes, tubes, transistors — real circuits, solved with Wave Digital Filters)
+instead of hand-writing DSP. The C++ side keeps everything the SDK gives you —
+pages, pot-catch, param-lock automation, CV routing, presets, settings, LED
+rings — and the audio callback simply calls into pedalkernel. Ships with the
+**ProCo RAT** as the demo pedal (Distortion / Filter / Volume). Clone it, build
+it, flash it, then drop in your own `.pedal`.
+
+## How it fits together
+
+```
+┌──────────────────────── firmware (Cortex-M7) ────────────────────────┐
+│                                                                       │
+│  C++  (Alchemy SDK)                     Rust  (pedal-dsp, no_std)      │
+│  ┌───────────────────┐                  ┌──────────────────────────┐  │
+│  │ pages, pot-catch, │  pk_set_control  │ pedalkernel CompiledPedal│  │
+│  │ param-lock, CV,   │ ───────────────► │  (WDF audio engine)      │  │
+│  │ presets, settings │                  │                          │  │
+│  │ LED rings         │ pk_process_block │  reconstructed from a     │  │
+│  │ audio callback    │ ◄──────────────► │  postcard blob baked in   │  │
+│  └───────────────────┘                  │  by build.rs             │  │
+│         main()                          └──────────────────────────┘  │
+│                                            libpedal_dsp.a (linked)     │
+└───────────────────────────────────────────────────────────────────────┘
+
+   build time (host):  dsp/pedals/demo.pedal ──[pedalkernel compiler]──►
+                       demo.postcard  ──include_bytes!──►  the firmware
+```
+
+The heavy compiler (DSL parse → WDF → serialized processor) runs **once at
+build time on your machine**. The device only ever *deserializes* the result
+and runs it per sample.
 
 ## What's inside
 
 ```
-├── Makefile             standard Daisy Makefile (libDaisy core underneath)
-├── src/                 the firmware — this is the part you edit
-│   ├── stereo_eq.cpp        hardware wiring, pages, knobs, CV, presets
-│   ├── stereo_eq_dsp.*      pure DSP (three-band biquad EQ per channel)
-│   └── stereo_eq_palette.h  LED color palettes
+├── Makefile                 builds the Rust lib + firmware, links them
+├── src/                     the C++ firmware — hardware, SDK surface, audio cb
+│   ├── pedal.cpp                knobs, pages, CV, presets → pk_* bridge calls
+│   ├── pedalkernel_bridge.h     the C ABI exported by the Rust lib
+│   └── pedal_palette.h          LED ring colors
+├── dsp/                     the Rust half → libpedal_dsp.a
+│   ├── Cargo.toml               staticlib; deps on pedalkernel-rt (no_std)
+│   ├── build.rs                 compiles a .pedal → postcard blob at build time
+│   ├── src/lib.rs               the bridge: pk_init / pk_process_block / pk_set_control
+│   ├── pedals/demo.pedal        the circuit (edit this / bring your own)
+│   └── .cargo/config.toml       targets thumbv7em-none-eabihf, cortex-m7
 └── lib/
-    ├── alchemy-sdk/     Alchemy framework + board support   (submodule)
-    └── libDaisy/        Electrosmith Daisy library           (submodule)
+    ├── alchemy-sdk/         Alchemy framework + board support   (submodule)
+    ├── libDaisy/            Electrosmith Daisy library          (submodule)
+    └── pedalkernel/         Rust WDF kernel                     (submodule)
 ```
 
 ## Requirements
 
-- `git`
-- `make`
-- `arm-none-eabi-gcc`
-- `dfu-util`
-
-Ubuntu / Debian:
-
-```sh
-sudo apt install git make gcc-arm-none-eabi dfu-util
-```
+- `git`, `make`
+- `arm-none-eabi-gcc` **with newlib** — use the ARM cask, not the bare compiler
+- a Rust toolchain (`rustup`) with the ARM bare-metal target
+- `dfu-util` (to flash)
 
 macOS (Homebrew):
 
 ```sh
 brew install git make dfu-util
-brew install --cask gcc-arm-embedded
+brew install --cask gcc-arm-embedded      # ships newlib; the `arm-none-eabi-gcc` formula does NOT
+rustup target add thumbv7em-none-eabihf
+```
+
+Ubuntu / Debian:
+
+```sh
+sudo apt install git make gcc-arm-none-eabi libnewlib-arm-none-eabi dfu-util
+rustup target add thumbv7em-none-eabihf
 ```
 
 ## Getting started
 
 ```sh
-git clone --recurse-submodules https://github.com/hermetic-modular/alchemy-template.git my-module
-cd my-module
+git clone --recurse-submodules git@github.com:FuturePresentLabs/alchemy-template-rust.git my-pedal
+cd my-pedal
 
 make libdaisy    # build libDaisy once after cloning
-make             # build the firmware → build/stereo_eq.bin
+make             # build the Rust DSP lib + firmware → build/pedal.bin
 ```
+
+`make` builds `dsp/` (cross-compiles pedalkernel + compiles `demo.pedal` into a
+blob) and then the C++ firmware, and links them.
 
 ## Flashing
 
-The Alchemy Lab runs a custom bootloader (`DaisyBootloader-AlchemyLabV2`)
-that serves DFU over the front-panel USB-C port.  Connect that port, then put
-the module in update mode: during the ~2 s window after power-on — the LED
-rings spin a warm-white comet — press or hold **B3.**  The rings switch to a slow breathe, and the module stays in DFU mode until it's flashed or reset.  Then:
+The Alchemy Lab runs a custom bootloader (`DaisyBootloader-AlchemyLabV2`) that
+serves DFU over the front-panel USB-C port. Connect that port, then put the
+module in update mode: during the ~2 s window after power-on — the LED rings
+spin a warm-white comet — press or hold **B3.** The rings switch to a slow
+breathe. Then:
 
 ```sh
 make program-dfu
 ```
 
-You can also use the [Hermetic Modular Web Programmer](https://hermeticmodular.com/program) straight from the browser.
+You can also use the [Hermetic Modular Web Programmer](https://hermeticmodular.com/program).
 
 ## Make it yours
 
-1. **Rename the firmware** — change `TARGET` at the top of the
-   [`Makefile`](Makefile) (this names the `.bin`), and rename the `src/`
-   files to taste, updating `CPP_SOURCES` to match.
-2. **Bring your own DSP** — replace `stereo_eq_dsp.*` and rewire the knobs,
-   pages, and CV matrix in `stereo_eq.cpp`.  Every framework feature is an
-   explicit constructor call; delete what you don't want.
-3. **Add source files** — append them to `CPP_SOURCES` in the Makefile.
-   One caveat from the underlying Daisy build: object files are flattened
-   into `build/` by basename, so two sources can't share a filename even in
-   different directories.
-4. **Learn the SDK** — the framework headers live in
-   `lib/alchemy-sdk/framework/include/alchemy/`, and the SDK's
-   [`examples/`](https://github.com/hermetic-modular/alchemy-sdk/tree/main/examples)
-   show other usage styles (the `kick` example is a minimal-opt-in
-   contrast to this template).
+1. **Swap the pedal.** Replace `dsp/pedals/demo.pedal` with your circuit (or
+   point `PK_PEDAL` at another file), rebuild, and flash. **No firmware edits
+   needed** — the control wiring is dynamic: at boot the firmware queries
+   `pk_num_controls()` and binds one pot per control, in declared order, naming
+   each knob from `pk_control_label()` and driving it with
+   `pk_set_control_by_index()`. (A pedal with more than the six physical pots
+   gets its first six on knobs; the rest keep their compiled defaults.)
+
+2. **Tune quality vs. CPU.** The demo builds at 1× oversampling with runtime
+   Newton-Raphson (small image, mono-friendly). Trade image size / CPU for
+   fidelity via the build tunables (Makefile vars or env, see
+   [`dsp/build.rs`](dsp/build.rs)):
+
+   ```sh
+   make PK_OVERSAMPLING=4                            # less aliasing on hard clipping
+   cd dsp && PK_K_TABLES=1 cargo build --release     # bake NR lookup tables (bigger, faster)
+   ```
+
+   Real-time headroom on the M7 depends on the circuit (nonlinear roots are the
+   cost). If audio glitches, drop oversampling or simplify the pedal.
+
+   The Rust lib is built `opt-level = "z"` (size). The BOOT_SRAM app runs
+   entirely from 480 KB of SRAM and pedalkernel-rt's WDF engine is large — every
+   device model is reachable via deserialization, so the linker can't drop the
+   unused ones. The RAT demo lands at ~409 KB (SRAM 83%). Switching the Rust
+   profile to `opt-level = 3` is faster but overflowed SRAM here; do it only with
+   a smaller circuit, and watch the `--print-memory-usage` output at link time.
+
+3. **The bridge.** Three C functions ([`src/pedalkernel_bridge.h`](src/pedalkernel_bridge.h)):
+
+   ```c
+   int32_t pk_init(float sample_rate, uint8_t* heap, size_t heap_len);
+   void    pk_process_block(const float* in, float* out, size_t n);
+   size_t  pk_num_controls(void);
+   size_t  pk_control_label(size_t idx, uint8_t* buf, size_t buf_len);
+   void    pk_set_control_by_index(size_t idx, float value);
+   void    pk_set_control(const uint8_t* label, size_t label_len, float value);
+   ```
+
+   pedalkernel is `no_std + alloc`; `pk_init` takes a heap region — the template
+   hands it 4 MB of SDRAM (costs nothing in the flashed image). Control writes
+   run in the main loop and audio in the callback, mirroring the SDK's own split.
+
+4. **Stereo.** The demo runs one mono processor and mirrors it to both outputs.
+   For true stereo, instantiate two processors on the Rust side (one per channel).
 
 ### Updating the vendored libraries
 
 ```sh
-git -C lib/alchemy-sdk pull origin main
-git add lib/alchemy-sdk && git commit -m "Bump alchemy-sdk"
+git -C lib/pedalkernel pull origin main
+git add lib/pedalkernel && git commit -m "Bump pedalkernel"
 ```
 
-The pinned libDaisy commit matches the one the Alchemy SDK itself vendors
-and tests against; if you bump one, consider bumping the other to match.
+The pinned libDaisy commit matches the one the Alchemy SDK vendors and tests
+against; if you bump one, consider bumping the other to match.
 
+## Licensing
 
-## License
+The template scaffolding in this repo is MIT (see `LICENSE`).
 
-MIT — see [LICENSE](LICENSE).  libDaisy is independently MIT-licensed by
-Electrosmith.
+The DSP it links — **pedalkernel — is AGPLv3** (`AGPL-3.0-or-later`), and this
+project is meant to support the community. If you're a hobbyist, tinkerer,
+researcher, or small maker, you're free to use, modify, build, and share it —
+just keep it under the AGPL, which means anything you distribute stays open:
+publish the complete corresponding source (your `.pedal` circuits and any
+changes) to whoever you distribute to.
+
+The one commercial line: pedalkernel's LICENSE adds a Section 7 condition —
+incorporating the kernel/runtime into hardware products *by any entity with
+annual revenue exceeding $1M USD* (or one majority-owned by such an entity)
+requires a separate commercial license from **Future Present Labs LLC**. That's
+the only case that steps outside the AGPL; everyone under that threshold is
+covered by it.
+
+For that case, pedalkernel is dual-licensed — a closed-source commercial
+license (kernel + runtime, hardware rights, prebuilt host bindings, and support)
+is available from **Future Present Labs**; contact **info@fpl.dev**.
+
+The authoritative terms are pedalkernel's
+[LICENSE](https://github.com/ajmwagar/pedalkernel/blob/main/LICENSE) — this
+summary is just a pointer.
