@@ -37,6 +37,7 @@ RUST_LIB     = $(RUST_LIB_DIR)/libpedal_dsp.a
 PK_SAMPLE_RATE  ?= 48000
 PK_OVERSAMPLING ?= 1
 PK_PEDAL        ?= pedals/demo.pedal
+PK_K_TABLES     ?= 0     # 1 = bake NR lookup tables (faster/smoother; bigger image)
 
 # ── App sources — yours to edit ─────────────────────────────────────────────
 CPP_SOURCES = \
@@ -73,14 +74,16 @@ include $(SYSTEM_FILES_DIR)/Makefile
 LIBDIR += -L$(RUST_LIB_DIR)
 LIBS   += -Wl,--start-group -lpedal_dsp -lc -lm -lnosys -Wl,--end-group
 
-# Build the Rust lib before linking. `rust-dsp` is phony so cargo always runs
-# (its own incremental cache makes that cheap); the firmware .elf depends on
-# the resulting archive.
-.PHONY: rust-dsp
-rust-dsp:
-	cd $(RUST_DIR) && PK_SAMPLE_RATE=$(PK_SAMPLE_RATE) PK_OVERSAMPLING=$(PK_OVERSAMPLING) PK_PEDAL=$(PK_PEDAL) cargo build --release
+# Build the Rust lib before linking. The archive itself carries the recipe with
+# a FORCE prerequisite, so cargo runs every build (incremental → cheap) but only
+# updates the archive's mtime when something actually changed. The firmware .elf
+# depends on the archive, so it relinks exactly when the lib changes (e.g. when
+# you flip PK_K_TABLES) — and not otherwise.
+.PHONY: FORCE
+FORCE:
+$(RUST_LIB): FORCE
+	cd $(RUST_DIR) && PK_SAMPLE_RATE=$(PK_SAMPLE_RATE) PK_OVERSAMPLING=$(PK_OVERSAMPLING) PK_PEDAL=$(PK_PEDAL) PK_K_TABLES=$(PK_K_TABLES) cargo build --release
 
-$(RUST_LIB): rust-dsp
 $(BUILD_DIR)/$(TARGET).elf: $(RUST_LIB)
 
 # Re-clean object files when switching board revision.

@@ -25,7 +25,13 @@ extern "C" {
  */
 int32_t pk_init(float sample_rate, uint8_t* heap, size_t heap_len);
 
-/** Process one mono block, `in` → `out`, `n` frames. Call from the audio callback. */
+/** Process a stereo block: left → channel 0, right → channel 1, `n` frames.
+ *  Call from the audio callback. Each channel is an independent instance of the
+ *  same pedal. */
+void pk_process_block_stereo(const float* in_l, const float* in_r,
+                             float* out_l, float* out_r, size_t n);
+
+/** Process one mono block through channel 0, `in` → `out`, `n` frames. */
 void pk_process_block(const float* in, float* out, size_t n);
 
 /** Set a normalized control (0..1) by its `.pedal` label. Call from the control loop. */

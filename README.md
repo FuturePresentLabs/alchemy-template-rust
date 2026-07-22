@@ -11,8 +11,9 @@ diodes, tubes, transistors — real circuits, solved with Wave Digital Filters)
 instead of hand-writing DSP. The C++ side keeps everything the SDK gives you —
 pages, pot-catch, param-lock automation, CV routing, presets, settings, LED
 rings — and the audio callback simply calls into pedalkernel. Ships with the
-**ProCo RAT** as the demo pedal (Distortion / Filter / Volume). Clone it, build
-it, flash it, then drop in your own `.pedal`.
+**ProCo RAT** as the demo pedal (Distortion / Filter / Volume), running in true
+stereo (an independent instance per channel). Clone it, build it, flash it, then
+drop in your own `.pedal`.
 
 ## How it fits together
 
@@ -23,9 +24,9 @@ it, flash it, then drop in your own `.pedal`.
 │  ┌───────────────────┐                  ┌──────────────────────────┐  │
 │  │ pages, pot-catch, │  pk_set_control  │ pedalkernel CompiledPedal│  │
 │  │ param-lock, CV,   │ ───────────────► │  (WDF audio engine)      │  │
-│  │ presets, settings │                  │                          │  │
-│  │ LED rings         │ pk_process_block │  reconstructed from a     │  │
-│  │ audio callback    │ ◄──────────────► │  postcard blob baked in   │  │
+│  │ presets, settings │   process_block  │  1 instance per channel   │  │
+│  │ LED rings         │ ◄──────────────► │  (stereo), from a         │  │
+│  │ audio callback    │      _stereo      │  postcard blob baked in   │  │
 │  └───────────────────┘                  │  by build.rs             │  │
 │         main()                          └──────────────────────────┘  │
 │                                            libpedal_dsp.a (linked)     │
@@ -38,6 +39,12 @@ it, flash it, then drop in your own `.pedal`.
 The heavy compiler (DSL parse → WDF → serialized processor) runs **once at
 build time on your machine**. The device only ever *deserializes* the result
 and runs it per sample.
+
+`build.rs` builds the compiler with pedalkernel's **`wave-f32`** feature so the
+blob's scalars are serialized as `f32` — matching the device's `Wave`. postcard
+isn't self-describing, so without this the f64 host blob would fail to
+deserialize on the M7 (and the firmware would never start). Needs a pedalkernel
+that has `wave-f32` ([ajmwagar/pedalkernel#221](https://github.com/ajmwagar/pedalkernel/pull/221)).
 
 ## What's inside
 
@@ -118,43 +125,61 @@ You can also use the [Hermetic Modular Web Programmer](https://hermeticmodular.c
    `pk_set_control_by_index()`. (A pedal with more than the six physical pots
    gets its first six on knobs; the rest keep their compiled defaults.)
 
-2. **Tune quality vs. CPU.** The demo builds at 1× oversampling with runtime
-   Newton-Raphson (small image, mono-friendly). Trade image size / CPU for
-   fidelity via the build tunables (Makefile vars or env, see
+2. **Tune quality vs. CPU vs. image size.** The demo builds at 1× oversampling
+   with runtime Newton-Raphson — small image (SRAM ~83%), but the NR solve is
+   iterative, so two channels of a hard nonlinear circuit is the tight case.
+   Baking **K-tables** swaps the per-sample solve for a lookup (cheap,
+   constant-time — the comfortable choice for stereo) at the cost of a bigger
+   baked blob. Tunables are Makefile vars (forwarded to
    [`dsp/build.rs`](dsp/build.rs)):
 
    ```sh
-   make PK_OVERSAMPLING=4                            # less aliasing on hard clipping
-   cd dsp && PK_K_TABLES=1 cargo build --release     # bake NR lookup tables (bigger, faster)
+   make PK_OVERSAMPLING=4      # less aliasing on hard clipping (multiplies CPU)
+   make PK_K_TABLES=1          # bake NR lookup tables — faster/smoother per sample
    ```
 
-   Real-time headroom on the M7 depends on the circuit (nonlinear roots are the
-   cost). If audio glitches, drop oversampling or simplify the pedal.
+   For the RAT the K-table blob is ~68 KB. It's `include_bytes!`'d into the
+   image, so it lands in the 480 KB SRAM app: the build goes from ~83% to ~96%
+   SRAM. Both channels **share that one blob** (deserialized into independent
+   state on the SDRAM heap), so stereo does not double it — but ~96% leaves
+   little room for a bigger circuit or higher oversampling. If audio glitches,
+   drop oversampling or simplify the pedal.
 
-   The Rust lib is built `opt-level = "z"` (size). The BOOT_SRAM app runs
-   entirely from 480 KB of SRAM and pedalkernel-rt's WDF engine is large — every
-   device model is reachable via deserialization, so the linker can't drop the
-   unused ones. The RAT demo lands at ~409 KB (SRAM 83%). Switching the Rust
-   profile to `opt-level = 3` is faster but overflowed SRAM here; do it only with
-   a smaller circuit, and watch the `--print-memory-usage` output at link time.
+   **Need headroom?** The blob doesn't have to live in SRAM. With 16 MB of QSPI
+   flash you can place `PEDAL_BLOB` in a QSPI-mapped (XIP) section instead — the
+   deserialize reads it once at init and SRAM drops back to ~83%. That needs a
+   custom linker section for the blob plus a separate step to program it to QSPI
+   (it isn't part of the SRAM `.bin` that `make program-dfu` writes), so it's a
+   hardware-validated add-on rather than a flag — open an issue if you want it.
+
+   (The Rust lib is built `opt-level = "z"` for size — pedalkernel-rt's WDF
+   engine is large and every device model is reachable via deserialization, so
+   the linker can't drop unused ones. `opt-level = 3` is faster but overflowed
+   SRAM here; use it only with a smaller circuit.)
 
 3. **The bridge.** Three C functions ([`src/pedalkernel_bridge.h`](src/pedalkernel_bridge.h)):
 
    ```c
    int32_t pk_init(float sample_rate, uint8_t* heap, size_t heap_len);
-   void    pk_process_block(const float* in, float* out, size_t n);
+   void    pk_process_block_stereo(const float* inL, const float* inR,
+                                   float* outL, float* outR, size_t n);
+   void    pk_process_block(const float* in, float* out, size_t n);   // mono, ch 0
    size_t  pk_num_controls(void);
    size_t  pk_control_label(size_t idx, uint8_t* buf, size_t buf_len);
-   void    pk_set_control_by_index(size_t idx, float value);
+   void    pk_set_control_by_index(size_t idx, float value);          // all channels
    void    pk_set_control(const uint8_t* label, size_t label_len, float value);
    ```
 
    pedalkernel is `no_std + alloc`; `pk_init` takes a heap region — the template
-   hands it 4 MB of SDRAM (costs nothing in the flashed image). Control writes
+   hands it 8 MB of SDRAM (costs nothing in the flashed image). Control writes
    run in the main loop and audio in the callback, mirroring the SDK's own split.
 
-4. **Stereo.** The demo runs one mono processor and mirrors it to both outputs.
-   For true stereo, instantiate two processors on the Rust side (one per channel).
+4. **Stereo (and beyond).** Left and right run through independent instances of
+   the same pedal: the audio callback calls `pk_process_block_stereo()`, and a
+   control write updates every channel. The count is `NUM_CHANNELS` in
+   [`dsp/src/lib.rs`](dsp/src/lib.rs) — the instances share the one baked blob
+   but keep their own audio state on the heap, so raising it costs SDRAM, not
+   flash.
 
 ### Updating the vendored libraries
 

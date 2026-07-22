@@ -4,7 +4,8 @@
  * The whole Alchemy SDK surface is here (a control page, pot-catch, param-lock
  * automation, per-knob CV, presets, settings, LED rings). The DSP is the Rust
  * `pedal-dsp` static library, which runs a pedalkernel `CompiledPedal` compiled
- * from `dsp/pedals/demo.pedal` (the ProCo RAT, by default) at build time.
+ * from `dsp/pedals/demo.pedal` (the ProCo RAT, by default) at build time —
+ * one instance per channel, so left and right are independent (true stereo).
  *
  * The control wiring is DYNAMIC: at boot we ask the Rust side how many controls
  * the loaded pedal exposes (pk_num_controls), read their labels
@@ -36,8 +37,9 @@ using namespace alchemy;
 /* ── Rust heap ───────────────────────────────────────────────────────────────
  * pedalkernel is `no_std + alloc`; it needs an allocator. We hand it a slab of
  * SDRAM (64 MB on the Daisy) at pk_init(). `.sdram_bss` is uninitialized, so
- * this costs nothing in the flashed image. 4 MB is ample for one pedal. */
-static constexpr size_t kPkHeapBytes = 4 * 1024 * 1024;
+ * this costs nothing in the flashed image. 8 MB comfortably holds two channel
+ * instances, even with K-tables baked in. */
+static constexpr size_t kPkHeapBytes = 8 * 1024 * 1024;
 static uint8_t DSY_SDRAM_BSS pk_heap[kPkHeapBytes];
 
 /* ── Controls (populated at boot from the loaded pedal) ──────────────────────
@@ -62,15 +64,12 @@ static void UpdateControls()
         pk_set_control_by_index(i, knobs[i].Value());
 }
 
-/* Mono guitar pedal: run the left input through pedalkernel, mirror to both
- * outputs. For true stereo you'd run two processor instances — see README. */
+/* Stereo: left and right run through independent instances of the same pedal. */
 static void AudioCallback(daisy::AudioHandle::InputBuffer  in,
                           daisy::AudioHandle::OutputBuffer out,
                           size_t                           size)
 {
-    pk_process_block(in[0], out[0], size);
-    for (size_t i = 0; i < size; ++i)
-        out[1][i] = out[0][i];
+    pk_process_block_stereo(in[0], in[1], out[0], out[1], size);
 }
 
 int main()
